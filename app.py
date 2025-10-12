@@ -1,8 +1,9 @@
 from flask import Flask, render_template, request, send_from_directory
 import os, cv2
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image
 from pillow_heif import register_heif_opener
+
 register_heif_opener()
 
 app = Flask(__name__)
@@ -15,27 +16,33 @@ os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 def index():
     return render_template('index.html')
 
+
 def apply_enhancements(img, options, brightness_val=25, contrast_val=25, sharpen_val=25):
-    img = cv2.convertScaleAbs(img)
+    # Always 8-bit, 3-channel
+    img = cv2.convertScaleAbs(img).astype(np.float32) / 255.0
 
-    # convert 0–100 scale to usable factors
-    b_factor = 1.0 + (brightness_val - 50) / 200.0   # ±25% range
-    c_factor = 1.0 + (contrast_val - 50) / 200.0     # ±25% range
-    s_strength = sharpen_val / 100.0                 # 0–1 intensity
+    b_factor = 1.0 + (brightness_val - 50) / 200.0   # ±25 %
+    c_factor = 1.0 + (contrast_val - 50) / 200.0
+    s_strength = sharpen_val / 100.0
 
+    # --- LIGHT DENOISE (skip full NLM) ---
     if "denoise" in options:
-        img = cv2.fastNlMeansDenoisingColored(img, None, 2, 2, 7, 21)
+        # gentle bilateral filter keeps edges & gradients
+        img = cv2.bilateralFilter(img, d=0, sigmaColor=0.02, sigmaSpace=5)
 
     if "brightness" in options or "contrast" in options:
-        img = cv2.convertScaleAbs(img, alpha=c_factor, beta=(b_factor - 1) * 50)
+        # Work in float space for smooth tone mapping
+        # Brightness shifts (additive), contrast stretches (around 0.5 mid gray)
+        brightness_shift = (b_factor - 1.0) * 0.25  # roughly ±0.25 range
+        img = np.clip((img - 0.5) * c_factor + 0.5 + brightness_shift, 0, 1)
 
+    # --- SHARPEN (very mild unsharp mask) ---
     if "sharpen" in options and s_strength > 0:
-        base = img.astype(np.float32)
-        blur = cv2.GaussianBlur(base, (0, 0), 3)
-        img = cv2.addWeighted(base, 1.0 + 0.8 * s_strength, blur, -0.8 * s_strength, 0)
-        img = np.clip(img, 0, 255).astype(np.uint8)
+        blur = cv2.GaussianBlur(img, (0, 0), 2)
+        img = cv2.addWeighted(img, 1.0 + 0.5 * s_strength, blur, -0.5 * s_strength, 0)
 
-    return img
+    return (np.clip(img, 0, 1) * 255).astype(np.uint8)
+
 
 def add_logo(base_path, logo_path, position, opacity=0.8, scale=0.25):
     base = Image.open(base_path).convert("RGBA")
@@ -49,7 +56,6 @@ def add_logo(base_path, logo_path, position, opacity=0.8, scale=0.25):
 
     # Apply overall opacity only once
     if opacity < 1.0:
-        # Adjust alpha channel directly
         alpha = logo.split()[3]
         alpha = alpha.point(lambda p: int(p * opacity))
         logo.putalpha(alpha)
@@ -66,12 +72,11 @@ def add_logo(base_path, logo_path, position, opacity=0.8, scale=0.25):
     else:  # top-right
         pos = (bw - lw - 20, 20)
 
-    # Composite cleanly without converting to RGB yet
     base.alpha_composite(logo, dest=pos)
 
-    # Convert to RGB only when saving (to avoid gray outline on transparent logo)
-    final = base.convert("RGB")
-    final.save(base_path, "JPEG", quality=95)
+    # Save as PNG with minimal compression (preserve gradients)
+    base.save(base_path, "PNG", compress_level=0)
+
 
 @app.route('/process', methods=['POST'])
 def process_images():
@@ -108,11 +113,13 @@ def process_images():
         img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
         if img is None:
             try:
-                # Convert HEIC → JPEG
+                # Convert HEIC → PNG
                 im = Image.open(img_path).convert("RGB")
-                heic_temp = os.path.join(UPLOAD_FOLDER, os.path.splitext(file.filename)[0] + ".jpg")
-                im.save(heic_temp, "JPEG", quality=95)
-                img = cv2.imread(heic_temp)
+                heic_temp = os.path.join(
+                    UPLOAD_FOLDER, os.path.splitext(file.filename)[0] + ".png"
+                )
+                im.save(heic_temp, "PNG", compress_level=1)
+                img = cv2.imread(heic_temp, cv2.IMREAD_UNCHANGED)
                 print(f"Converted {file.filename} → {os.path.basename(heic_temp)}")
             except Exception as e:
                 print(f"❌ Could not convert {file.filename}: {e}")
@@ -131,9 +138,9 @@ def process_images():
         img = apply_enhancements(img, options, brightness_val, contrast_val, sharpen_val)
 
         base_name = os.path.splitext(file.filename)[0]
-        out_filename = base_name + ".jpg"
+        out_filename = base_name + ".png"
         out_path = os.path.join(PROCESSED_FOLDER, out_filename)
-        cv2.imwrite(out_path, img)
+        cv2.imwrite(out_path, img, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])  # near-lossless PNG
 
         if logo_path:
             add_logo(out_path, logo_path, position, opacity, scale)
@@ -148,6 +155,7 @@ def process_images():
 @app.route('/processed/<filename>')
 def download_file(filename):
     return send_from_directory(PROCESSED_FOLDER, filename)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
