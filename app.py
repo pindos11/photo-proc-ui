@@ -6,6 +6,9 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
+COMPRESSION = 8
+JPEG_QUALITY = 95
+
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
 PROCESSED_FOLDER = 'processed'
@@ -17,7 +20,7 @@ def index():
     return render_template('index.html')
 
 
-def apply_enhancements(img, options, brightness_val=25, contrast_val=25, sharpen_val=25):
+def apply_enhancements(img, options, brightness_val=25, contrast_val=25, sharpen_val=25, temp_val=50):
     # Always 8-bit, 3-channel
     img = cv2.convertScaleAbs(img).astype(np.float32) / 255.0
 
@@ -35,6 +38,14 @@ def apply_enhancements(img, options, brightness_val=25, contrast_val=25, sharpen
         # Brightness shifts (additive), contrast stretches (around 0.5 mid gray)
         brightness_shift = (b_factor - 1.0) * 0.25  # roughly ±0.25 range
         img = np.clip((img - 0.5) * c_factor + 0.5 + brightness_shift, 0, 1)
+
+    if "contrast" in options or "brightness" in options or True:  # always allowed
+        temp_strength = (temp_val - 50) / 50.0  # -1.0 (cool) → +1.0 (warm)
+        # small bias per channel (float domain)
+        warm_tone = np.array([1.0 - 0.1 * temp_strength, 1.0, 1.0 + 0.1 * temp_strength])
+        # normalize to avoid overexposure
+        warm_tone /= np.max(warm_tone)
+        img = np.clip(img * warm_tone, 0, 1)
 
     # --- SHARPEN (very mild unsharp mask) ---
     if "sharpen" in options and s_strength > 0:
@@ -75,7 +86,13 @@ def add_logo(base_path, logo_path, position, opacity=0.8, scale=0.25):
     base.alpha_composite(logo, dest=pos)
 
     # Save as PNG with minimal compression (preserve gradients)
-    base.save(base_path, "PNG", compress_level=0)
+    ext = os.path.splitext(base_path)[1].lower()
+
+    if ext == ".jpg" or ext == ".jpeg":
+        base = base.convert("RGB")
+        base.save(base_path, "JPEG", quality=JPEG_QUALITY, subsampling=0, optimize=True)
+    else:
+        base.save(base_path, "PNG", compress_level=COMPRESSION)
 
 
 @app.route('/process', methods=['POST'])
@@ -83,6 +100,7 @@ def process_images():
     brightness_val = int(request.form.get('brightness_val', 25))
     contrast_val = int(request.form.get('contrast_val', 25))
     sharpen_val = int(request.form.get('sharpen_val', 25))
+    temp_val = int(request.form.get('temp_val', 50))
 
     # Get files and parameters
     files = request.files.getlist('images')
@@ -91,6 +109,8 @@ def process_images():
     position = request.form.get('position')
     opacity = float(request.form.get('opacity', 0.8))
     scale = float(request.form.get('scale', 0.25))
+
+    output_format = request.form.get("output_format", "png").lower()
 
     print(f"DEBUG: got {len(files)} image(s)")
     print(f"DEBUG: logo present: {bool(logo)}")
@@ -135,13 +155,20 @@ def process_images():
             img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         img = cv2.convertScaleAbs(img)
 
-        img = apply_enhancements(img, options, brightness_val, contrast_val, sharpen_val)
+        img = apply_enhancements(img, options, brightness_val, contrast_val, sharpen_val, temp_val)
 
         base_name = os.path.splitext(file.filename)[0]
-        out_filename = base_name + ".png"
-        out_path = os.path.join(PROCESSED_FOLDER, out_filename)
-        cv2.imwrite(out_path, img, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])  # near-lossless PNG
 
+        if output_format == "jpeg":
+            out_filename = base_name + ".jpg"
+            out_path = os.path.join(PROCESSED_FOLDER, out_filename)
+            cv2.imwrite(out_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+        else:
+            out_filename = base_name + ".png"
+            out_path = os.path.join(PROCESSED_FOLDER, out_filename)
+            cv2.imwrite(out_path, img, [int(cv2.IMWRITE_PNG_COMPRESSION), COMPRESSION])
+
+        # Apply logo overlay
         if logo_path:
             add_logo(out_path, logo_path, position, opacity, scale)
 

@@ -19,6 +19,7 @@
                     <label><input type="checkbox" name="options" value="sharpen" checked> Sharpen</label>
                     <label><input type="checkbox" name="options" value="contrast" checked> Contrast</label>
                     <label><input type="checkbox" name="options" value="brightness" checked> Brightness</label>
+                    
                 </div>
 
                 <div class="sliders">
@@ -35,6 +36,11 @@
                     <label>Sharpen:
                         <input type="range" id="sharpen_val" name="sharpen_val" min="0" max="100" step="5" value="25">
                         <span id="sharpen_label">25%</span>
+                    </label><br>
+
+                    <label>Color temperature:
+                        <input type="range" id="temp_val" name="temp_val" min="0" max="100" step="5" value="50">
+                        <span id="temp_label">50%</span>
                     </label>
                 </div>
             <h3>3️⃣ Add logo (optional)</h3>
@@ -49,7 +55,9 @@
             </label>
             <label>Opacity: <input type="range" name="opacity" id="opacity" min="0" max="1" step="0.05" value="0.8"></label>
             <label>Scale: <input type="range" name="scale" id="scale" min="0.1" max="0.6" step="0.05" value="0.25"></label>
-
+            <h3>4️⃣ Output format</h3>
+                <label><input type="radio" name="output_format" value="png" checked> PNG (lossless)</label>
+                <label><input type="radio" name="output_format" value="jpeg"> JPEG (100% quality)</label>
             <button type="submit">⚙️ Process Images</button>
         </form>
 

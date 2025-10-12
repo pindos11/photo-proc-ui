@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", () => {
   // live slider labels
-  ["brightness", "contrast", "sharpen"].forEach(name => {
+  ["brightness", "contrast", "sharpen", "temp"].forEach(name => {
     const slider = document.getElementById(`${name}_val`);
     const label = document.getElementById(`${name}_label`);
     slider.addEventListener("input", () => {
@@ -16,6 +16,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const imageInput = document.getElementById("images");
     const logoInput = document.getElementById("logo");
     const options = document.querySelectorAll('input[name="options"]:checked');
+    const outputFormat = document.querySelector('input[name="output_format"]:checked').value;
+    formData.append("output_format", outputFormat);
 
     // append images
     for (let file of imageInput.files) {
@@ -34,6 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("brightness_val", document.getElementById("brightness_val").value);
     formData.append("contrast_val", document.getElementById("contrast_val").value);
     formData.append("sharpen_val", document.getElementById("sharpen_val").value);
+    formData.append("temp_val", document.getElementById("temp_val").value);
 
     // other params
     formData.append("position", document.getElementById("position").value);
